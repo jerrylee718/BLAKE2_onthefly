@@ -1,0 +1,3 @@
+VP=/opt/tools/Mentor/modeltech/bin
+
+vsim -c -t 1ps -novopt tb_blake2_core
