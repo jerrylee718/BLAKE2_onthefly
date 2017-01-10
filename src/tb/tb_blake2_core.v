@@ -66,6 +66,7 @@ module tb_blake2_core();
   reg            tb_next_512, tb_next_256;
   reg            tb_final_512, tb_final_256;
   reg [1023 : 0] tb_block_512, tb_block_256;
+  reg [511 : 0]	 tb_key_512, tb_key_256;
   reg [127 : 0]  tb_length_512, tb_length_256;
   wire           tb_ready_512, tb_ready_256;
   wire [511 : 0] tb_digest_512, tb_digest_256;
@@ -92,8 +93,9 @@ module tb_blake2_core();
     .reset_n(tb_reset_n),
     .init(tb_init_512),
     .next(tb_next_512),
-    .final_block(tb_final_512),
+//    .final_block(tb_final_512),
     .block(tb_block_512),
+	.key(tb_key_512),
     .data_length(tb_length_512),
     .ready(tb_ready_512),
     .digest(tb_digest_512),
@@ -109,8 +111,9 @@ module tb_blake2_core();
     .reset_n(tb_reset_n),
     .init(tb_init_256),
     .next(tb_next_256),
-    .final_block(tb_final_256),
+//    .final_block(tb_final_256),
     .block(tb_block_256),
+	.key(tb_key_256),
     .data_length(tb_length_256),
     .ready(tb_ready_256),
     .digest(tb_digest_256),
@@ -183,20 +186,21 @@ module tb_blake2_core();
   //----------------------------------------------------------------
   task test_512_core(
       input [1023 : 0] block,
+      input [511: 0] key,
       input [127 : 0]  data_length,
       input [511 : 0]  expected
     );
     begin
       tb_block_512 = block;
+	  tb_key_512 = key;
       tb_length_512 = data_length;
 
       reset_dut();
 
       tb_init_512 = 1;
-      tb_final_512 = 1;
+//      tb_final_512 = 1;
       #(1 * CLK_PERIOD);
-//      #(2 * CLK_PERIOD);
-//      tb_final_512 = 0;
+  //    tb_final_512 = 0;
       tb_init_512 = 0;
 
       while (!tb_digest_valid_512)
@@ -298,9 +302,9 @@ module tb_blake2_core();
 //      );
 //
       test_512_core(
-        1024'h610a4485ad561f80716d7b0ccb7d876c3eaacdf75e934266d061eb7b9f68d093fc756d945b0bbf822d71f4e5e9b733e7acf870a4b6c0e610145781beca04e63f1b22e0a1b048797e53d94d732567e8fc77cb4f5fe7cce5be3f915d9520879e17e6f4016be0228692da17256a9ea7c12c502954e1fa50d8f32bd30d7abe487872,
+        1024'h610a4485ad561f80716d7b0ccb7d876c3eaacdf75e934266d061eb7b9f68d093fc756d945b0bbf822d71f4e5e9b733e7acf870a4b6c0e610145781beca04e63f1b22e0a1b048797e53d94d732567e8fc77cb4f5fe7cce5be3f915d9520879e17e6f4016be0228692da17256a9ea7c12c502954e1fa50d8f32bd30d7abe487872,512'h0,
         128,
-        512'hae531a602a32d012e9fd2872b8bc5c854c0de37c64e4abe951d573ab097afe664f3c8f95c332346a8ebbd859281030e99fa05c59de5e08fc64a1dfbccd416cdf
+        512'h3c988199fb63633705ce2a978f48743648429b00b9571b4d6525f57f5226000964a59953465b80e16400dbcee41d9c498a0c807531ed38561bcc03ef933d24c1
       );
 
 //      test_256_core(
@@ -326,6 +330,14 @@ module tb_blake2_core();
 //      $finish_and_return(error_ctr);
       $finish;
     end // blake2_core_test
+    initial begin
+	    $dumpfile("./DUMP/tb_blake2_core.fsdb");
+	end
+
+	initial begin
+		$dumpvars(0,tb_blake2_core);
+		$dumpon;
+	end
 endmodule // tb_blake2_core
 
 //======================================================================

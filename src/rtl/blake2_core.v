@@ -46,9 +46,10 @@ module blake2_core(
 
                    input wire            init,
                    input wire            next,
-                   input wire            final_block,
+//                   input wire            final_block,
 
                    input wire [1023 : 0] block,
+				   input wire [511 : 0]  key,
                    input wire [127 : 0]  data_length,
 
                    output wire           ready,
@@ -71,7 +72,7 @@ module blake2_core(
   parameter [7:0] DIGEST_LENGTH = 8'd64;   // 
 
   // The key length in bytes. Minimum: 0 (for no key used), Maximum: 64
-  parameter [7:0] KEY_LENGTH = 8'd0;
+  parameter [7:0] KEY_LENGTH = 8'd64;		
 
   // Fanout
   parameter [7:0] FANOUT = 8'h01;
@@ -120,12 +121,14 @@ module blake2_core(
   localparam IV6 = 64'h1f83d9abfb41bd6b;
   localparam IV7 = 64'h5be0cd19137e2179;
 
-  localparam CTRL_IDLE     = 3'h0;
-  localparam CTRL_INIT     = 3'h1;
-  localparam CTRL_ROUNDS   = 3'h2;
-  localparam CTRL_FINALIZE = 3'h3;
-  localparam CTRL_DONE     = 3'h4;
-
+  localparam CTRL_IDLE     		= 4'h0;
+  localparam CTRL_INIT     		= 4'h1;
+  localparam CTRL_ROUNDS   		= 4'h2;
+  localparam CTRL_FINALIZE 		= 4'h3;
+  localparam CTRL_INIT_KEY     	= 4'h4;
+  localparam CTRL_ROUNDS_KEY    = 4'h5;
+  localparam CTRL_FINALIZE_KEY  = 4'h6;
+  localparam CTRL_DONE     		= 4'h7;
 
   //----------------------------------------------------------------
   // Registers including update variables and write enable.
@@ -219,9 +222,14 @@ module blake2_core(
   reg         dr_ctr_inc;
   reg         dr_ctr_rst;
 
-  reg [2 : 0] blake2_ctrl_reg;
-  reg [2 : 0] blake2_ctrl_new;
+  reg [3 : 0] blake2_ctrl_reg;
+  reg [3 : 0] blake2_ctrl_new;
   reg         blake2_ctrl_we;
+
+  //----------------------------------------------------------------
+  // NEW VARs. 
+  //----------------------------------------------------------------
+  reg [1023:0] modified_block;	  
 
 
   //----------------------------------------------------------------
@@ -229,6 +237,7 @@ module blake2_core(
   //----------------------------------------------------------------
   reg sample_params;
   reg init_state;
+  reg final_block;
   reg update_state;
   reg update_output;
 
@@ -286,7 +295,7 @@ module blake2_core(
                           .clk(clk),
                           .reset_n(reset_n),
                           .load(load_m),
-                          .m(block),
+                          .m(modified_block),
                           .r(dr_ctr_reg),
                           .state(G_ctr_reg),
                           .G0_m0(G0_m0),
@@ -371,6 +380,8 @@ module blake2_core(
                    h5_reg[7:0], h5_reg[15:8], h5_reg[23:16], h5_reg[31:24], h5_reg[39:32], h5_reg[47:40], h5_reg[55:48], h5_reg[63:56],
                    h6_reg[7:0], h6_reg[15:8], h6_reg[23:16], h6_reg[31:24], h6_reg[39:32], h6_reg[47:40], h6_reg[55:48], h6_reg[63:56],
                    h7_reg[7:0], h7_reg[15:8], h7_reg[23:16], h7_reg[31:24], h7_reg[39:32], h7_reg[47:40], h7_reg[55:48], h7_reg[63:56]};
+
+//  assign digest = {h0_reg, h1_reg, h2_reg, h3_reg, h4_reg, h5_reg, h6_reg, h7_reg};
 
   assign digest_valid = digest_valid_reg;
 
@@ -492,7 +503,8 @@ module blake2_core(
   //----------------------------------------------------------------
   always @*
     begin : chain_logic
-      if (init_state)
+      if ((init_state&&(blake2_ctrl_reg==CTRL_INIT_KEY))||
+	      (init_state&&(blake2_ctrl_reg==CTRL_INIT)&&(KEY_LENGTH==8'd0)))
         begin
           h0_new  = IV0 ^ parameter_block[63:0];
           h1_new  = IV1 ^ parameter_block[127:64];
@@ -536,9 +548,20 @@ module blake2_core(
   //
   // Logic to init and update the internal state.
   //----------------------------------------------------------------
+ 
+  reg [63:0] data_length_reg; 
+
+  always @(posedge clk or negedge reset_n) begin
+      if (!reset_n) 
+	      data_length_reg <= 64'h0;
+      else if (blake2_ctrl_new==CTRL_INIT_KEY||blake2_ctrl_new==CTRL_INIT)
+	      data_length_reg <= data_length_reg + data_length;
+  end
+  
   always @*
     begin : state_logic
-      if (init_state)
+      if ((init_state&&(blake2_ctrl_reg==CTRL_INIT_KEY))||
+	      (init_state&&(blake2_ctrl_reg==CTRL_INIT)&&(KEY_LENGTH==8'd0)))
         begin
           v0_new  = IV0 ^ parameter_block[63:0];
           v1_new  = IV1 ^ parameter_block[127:64];
@@ -552,7 +575,30 @@ module blake2_core(
           v9_new  = IV1;
           v10_new = IV2;
           v11_new = IV3;
-          v12_new = data_length[63:0] ^ IV4;
+          v12_new = data_length_reg[63:0] ^ IV4;
+          v13_new = t1_reg ^ IV5;
+          if (final_block)
+            v14_new = 64'hffffffffffffffff ^ IV6;
+          else
+            v14_new = IV6;
+          v15_new = f1_reg ^ IV7;
+          v_we    = 1;
+        end
+      else if (init_state&&(blake2_ctrl_reg==CTRL_INIT)&&(KEY_LENGTH!=8'd0))
+        begin
+          v0_new  = h0_reg; 
+          v1_new  = h1_reg; 
+          v2_new  = h2_reg; 
+          v3_new  = h3_reg; 
+          v4_new  = h4_reg; 
+          v5_new  = h5_reg; 
+          v6_new  = h6_reg; 
+          v7_new  = h7_reg; 
+          v8_new  = IV0;
+          v9_new  = IV1;
+          v10_new = IV2;
+          v11_new = IV3;
+          v12_new = data_length_reg[63:0] ^ IV4;
           v13_new = t1_reg ^ IV5;
           if (final_block)
             v14_new = 64'hffffffffffffffff ^ IV6;
@@ -752,10 +798,11 @@ module blake2_core(
   //----------------------------------------------------------------
   always @*
     begin : blake2_ctrl_fsm
-      init_state         = 0;
-      update_state       = 0;
-
-      load_m             = 0;
+      init_state         = 0;			// when logic 1, possible to calculate h(n)_new = IVn * parameter[~:~]
+	  final_block        = 0;
+      update_state       = 0;			// when logic 1, possible to update h(n)_new after initialization of h(n)_new
+ 
+      load_m             = 0;			// when IDLE & DONE state, load_m is logic 1
 
       G_ctr_inc          = 0;
       G_ctr_rst          = 0;
@@ -763,7 +810,7 @@ module blake2_core(
       dr_ctr_inc         = 0;
       dr_ctr_rst         = 0;
 
-      update_chain_value = 0;
+      update_chain_value = 0;			// when needing to update h(n)_new, "update_chain_value" is logic 1
 
       ready_new          = 0;
       ready_we           = 0;
@@ -771,27 +818,70 @@ module blake2_core(
       digest_valid_new   = 0;
       digest_valid_we    = 0;
 
-      blake2_ctrl_new    = CTRL_IDLE;
-      blake2_ctrl_we     = 0;
+      blake2_ctrl_new    = CTRL_IDLE;	
+      blake2_ctrl_we     = 0;			// when logic 1, possible to change "blake2_ctrl_reg"(now state) by "blake2_ctrl_new"
 
 
       case (blake2_ctrl_reg)
-        CTRL_IDLE:
+        CTRL_IDLE:				// 3'h0, standby step
           begin
             if (init)
               begin
                 ready_new       = 0;
                 ready_we        = 1;
-                load_m          = 1;
-                blake2_ctrl_new = CTRL_INIT;
-                blake2_ctrl_we  = 1;
+	            load_m          = 1;
+				if (KEY_LENGTH!=8'h00) modified_block = {512'h0, key[511:0]};
+				else                   modified_block = block;
+
+				if (KEY_LENGTH!=8'h00) blake2_ctrl_new = CTRL_INIT_KEY;
+				else                   blake2_ctrl_new = CTRL_INIT;
+        	    blake2_ctrl_we  = 1;
+			 end
+          end
+
+        CTRL_INIT_KEY:				// 3'h1, initialization step
+          begin
+            init_state      = 1;
+            G_ctr_rst       = 1;
+            dr_ctr_rst      = 1;
+            blake2_ctrl_new = CTRL_ROUNDS_KEY;
+            blake2_ctrl_we  = 1;
+          end
+
+
+        CTRL_ROUNDS_KEY:			// 3'h2, column & vertical update step
+          begin
+            update_state = 1;
+            G_ctr_inc   = 1;							// switching column val to diagonal	val that has to update
+            if (G_ctr_reg == STATE_G1)					// STATE_G1 = 1'b1
+              begin
+                dr_ctr_inc = 1;							// For counting ROUNDS
+                if (dr_ctr_reg == (NUM_ROUNDS - 1))		// After rotating 12 ROUNDS,
+                  begin
+                    blake2_ctrl_new = CTRL_FINALIZE_KEY;
+                    blake2_ctrl_we  = 1;
+                  end
               end
           end
 
 
-        CTRL_INIT:
+        CTRL_FINALIZE_KEY:			// 3'h3, "h(n)_new" update step 
           begin
-            init_state      = 1;
+            update_chain_value = 1;	
+            ready_new          = 1;
+            ready_we           = 1;
+//            digest_valid_new   = 1;
+//            digest_valid_we    = 1;
+			blake2_ctrl_new    = CTRL_INIT;
+			blake2_ctrl_we     = 1;
+	        load_m          = 1;
+			modified_block = block;
+          end
+
+        CTRL_INIT:				// 3'h1, initialization step
+          begin
+           	init_state      = 1;
+			final_block     = 1;
             G_ctr_rst       = 1;
             dr_ctr_rst      = 1;
             blake2_ctrl_new = CTRL_ROUNDS;
@@ -799,14 +889,14 @@ module blake2_core(
           end
 
 
-        CTRL_ROUNDS:
+        CTRL_ROUNDS:			// 3'h2, column & vertical update step
           begin
             update_state = 1;
-            G_ctr_inc   = 1;
-            if (G_ctr_reg == STATE_G1)
+            G_ctr_inc   = 1;							// switching column val to diagonal	val that has to update
+            if (G_ctr_reg == STATE_G1)					// STATE_G1 = 1'b1
               begin
-                dr_ctr_inc = 1;
-                if (dr_ctr_reg == (NUM_ROUNDS - 1))
+                dr_ctr_inc = 1;							// For counting ROUNDS
+                if (dr_ctr_reg == (NUM_ROUNDS - 1))		// After rotating 12 ROUNDS,
                   begin
                     blake2_ctrl_new = CTRL_FINALIZE;
                     blake2_ctrl_we  = 1;
@@ -815,9 +905,9 @@ module blake2_core(
           end
 
 
-        CTRL_FINALIZE:
+        CTRL_FINALIZE:			// 3'h3, "h(n)_new" update step 
           begin
-            update_chain_value = 1;
+            update_chain_value = 1;	
             ready_new          = 1;
             ready_we           = 1;
             digest_valid_new   = 1;
@@ -826,8 +916,7 @@ module blake2_core(
             blake2_ctrl_we     = 1;
           end
 
-
-        CTRL_DONE:
+        CTRL_DONE:				// 3'h4
           begin
             if (init)
               begin
@@ -836,6 +925,7 @@ module blake2_core(
                 digest_valid_new = 0;
                 digest_valid_we  = 1;
                 load_m           = 1;
+				modified_block   = block;
                 blake2_ctrl_new  = CTRL_INIT;
                 blake2_ctrl_we   = 1;
               end
@@ -846,9 +936,14 @@ module blake2_core(
                 digest_valid_new = 0;
                 digest_valid_we  = 1;
                 load_m           = 1;
+				modified_block   = block;
                 blake2_ctrl_new  = CTRL_INIT;
                 blake2_ctrl_we   = 1;
               end
+            else 
+			  begin
+			    blake2_ctrl_new  = CTRL_IDLE;
+			  end
           end
 
 

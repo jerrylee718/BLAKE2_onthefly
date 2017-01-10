@@ -20,6 +20,9 @@
 #include "blake2.h"
 #include "blake2-impl.h"
 
+/*	S->h[n] = IV[n] 			*/
+/*	S->f[n] = -1				*/
+/*	S->t[n] = increment by 128	*/
 static const uint64_t blake2b_IV[8] =
 {
   0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
@@ -27,6 +30,9 @@ static const uint64_t blake2b_IV[8] =
   0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
   0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
 };
+/* 
+  Value of IV[0] ~ IV[7] = S->h[0] ~ S->h[7] orderly
+*/
 
 static const uint8_t blake2b_sigma[12][16] =
 {
@@ -86,8 +92,15 @@ int blake2b_init_param( blake2b_state *S, const blake2b_param *P )
   blake2b_init0( S );
 
   /* IV XOR ParamBlock */
-  for( i = 0; i < 8; ++i )
+  for( i = 0; i < 8; ++i ) {
+	printf("Initial S->h[%d] = 0x%016lx\n",i,S->h[i]);
+	printf("parameter[%d] = 0x%016lx\n",i,load64( p + sizeof( S->h[i] ) * i ));
+	printf("sizeof(S->h[%d]) = %d\n",i,sizeof(S->h[i]));
+
     S->h[i] ^= load64( p + sizeof( S->h[i] ) * i );
+  }
+
+
 
   S->outlen = P->digest_length;
   return 0;
@@ -120,6 +133,7 @@ int blake2b_init( blake2b_state *S, size_t outlen )
 int blake2b_init_key( blake2b_state *S, size_t outlen, const void *key, size_t keylen )
 {
   blake2b_param P[1];
+  int i, j, k;
 
   if ( ( !outlen ) || ( outlen > BLAKE2B_OUTBYTES ) ) return -1;
 
@@ -138,7 +152,18 @@ int blake2b_init_key( blake2b_state *S, size_t outlen, const void *key, size_t k
   memset( P->salt,     0, sizeof( P->salt ) );
   memset( P->personal, 0, sizeof( P->personal ) );
 
+
   if( blake2b_init_param( S, P ) < 0 ) return -1;
+
+  printf("In blake2b_init_key\n");
+  printf("DIGEST_LENGTH = %d\n", outlen);
+  printf("KEY_LENGTH = %d\n", keylen);
+  for(i=0;i<9;i++)	  printf("h[%d] = 0x%016lx\n",i,(uint64_t)S->h[i]);
+  for(j=0;j<3;j++)	  printf("t[%d] = 0x%016lx\n",j,(uint64_t)S->t[j]);
+  for(k=0;k<3;k++)	  printf("f[%d] = 0x%016lx\n",k,(uint64_t)S->f[k]);
+  printf("buflen = %d\n",(int)S->buflen);
+  printf("outlen = %d\n",(int)S->outlen);
+  printf("last_node = %d\n",(int)S->last_node);
 
   {
     uint8_t block[BLAKE2B_BLOCKBYTES];
@@ -174,6 +199,22 @@ int blake2b_init_key( blake2b_state *S, size_t outlen, const void *key, size_t k
     G(r,7,v[ 3],v[ 4],v[ 9],v[14]); \
   } while(0)
 
+#define ROUND_begin(r)                    \
+  do {                              \
+    G(r,0,v[ 0],v[ 4],v[ 8],v[12]); \
+    G(r,1,v[ 1],v[ 5],v[ 9],v[13]); \
+    G(r,2,v[ 2],v[ 6],v[10],v[14]); \
+    G(r,3,v[ 3],v[ 7],v[11],v[15]); \
+  } while(0)
+
+#define ROUND_end(r)                    \
+  do {                              \
+    G(r,4,v[ 0],v[ 5],v[10],v[15]); \
+    G(r,5,v[ 1],v[ 6],v[11],v[12]); \
+    G(r,6,v[ 2],v[ 7],v[ 8],v[13]); \
+    G(r,7,v[ 3],v[ 4],v[ 9],v[14]); \
+  } while(0)
+
 static void blake2b_compress( blake2b_state *S, const uint8_t block[BLAKE2B_BLOCKBYTES] )
 {
   uint64_t m[16];
@@ -197,7 +238,30 @@ static void blake2b_compress( blake2b_state *S, const uint8_t block[BLAKE2B_BLOC
   v[14] = blake2b_IV[6] ^ S->f[0];
   v[15] = blake2b_IV[7] ^ S->f[1];
 
-  ROUND( 0 );
+  
+  for( i = 0; i < 16; ++i ) {
+      printf ("m[%2d] = 0x%016lx\n", i, m[i]);
+  }
+
+  for( i = 0; i < 16; ++i ) {
+      printf ("v[%2d] = 0x%016lx\n", i, v[i]);
+  }
+
+
+/*for(int k=0;k<16;k++)
+  printf("v[%d] = %x",(int)i,(int)v[k]);*/
+  ROUND_begin( 0 );
+
+  printf ("\n");
+  printf ("AFTER ROUND_begin(0)\n");
+  for( i = 0; i < 16; ++i ) {
+      printf ("v[%2d] = 0x%016lx\n", i, v[i]);
+  }
+  ROUND_end( 0 );
+  printf ("AFTER ROUND_end(0)\n");
+  for( i = 0; i < 16; ++i ) {
+      printf ("v[%2d] = 0x%016lx\n", i, v[i]);
+  }
   ROUND( 1 );
   ROUND( 2 );
   ROUND( 3 );
@@ -209,6 +273,11 @@ static void blake2b_compress( blake2b_state *S, const uint8_t block[BLAKE2B_BLOC
   ROUND( 9 );
   ROUND( 10 );
   ROUND( 11 );
+
+  printf ("AFTER ROUND_end(11)\n");
+  for( i = 0; i < 16; ++i ) {
+      printf ("v[%2d] = 0x%016lx\n", i, v[i]);
+  }
 
   for( i = 0; i < 8; ++i ) {
     S->h[i] = S->h[i] ^ v[i] ^ v[i + 8];
@@ -273,6 +342,7 @@ int blake2b_final( blake2b_state *S, void *out, size_t outlen )
 int blake2b( void *out, size_t outlen, const void *in, size_t inlen, const void *key, size_t keylen )
 {
   blake2b_state S[1];
+  int i,j,k;
 
   /* Verify parameters */
   if ( NULL == in && inlen > 0 ) return -1;
@@ -294,8 +364,23 @@ int blake2b( void *out, size_t outlen, const void *in, size_t inlen, const void 
     if( blake2b_init( S, outlen ) < 0 ) return -1;
   }
 
+  printf("\n");
+  for(i=0;i<9;i++)	  printf("h[%d] = 0x%016lx\n",i,(uint64_t)S->h[i]);
+  for(j=0;j<3;j++)	  printf("t[%d] = 0x%016lx\n",j,(uint64_t)S->t[j]);
+  for(k=0;k<3;k++)	  printf("f[%d] = 0x%016lx\n",k,(uint64_t)S->f[k]);
+  printf("buflen = %d\n",(int)S->buflen);
+  printf("outlen = %d\n",(int)S->outlen);
+  printf("last_node = %d\n",(int)S->last_node);
+
   blake2b_update( S, ( const uint8_t * )in, inlen );
   blake2b_final( S, out, outlen );
+  printf("\n");
+  for(i=0;i<9;i++)	  printf("h[%d] = 0x%016lx\n",i,(uint64_t)S->h[i]);
+  for(j=0;j<3;j++)	  printf("t[%d] = 0x%016lx\n",j,(uint64_t)S->t[j]);
+  for(k=0;k<3;k++)	  printf("f[%d] = 0x%016lx\n",k,(uint64_t)S->f[k]);
+  printf("buflen = %d\n",(int)S->buflen);
+  printf("outlen = %d\n",(int)S->outlen);
+  printf("last_node = %d\n",(int)S->last_node);
   return 0;
 }
 
@@ -304,7 +389,7 @@ int blake2( void *out, size_t outlen, const void *in, size_t inlen, const void *
 }
 
 #if defined(SUPERCOP)
-int crypto_hash( unsigned char *out, unsigned char *in, unsigned long long inlen )
+int crypto_hash( unsigned char *out, unsigned char *in, unsigned long long inlen)
 {
   return blake2b( out, BLAKE2B_OUTBYTES, in, inlen, NULL, 0 );
 }
@@ -319,57 +404,331 @@ int main( void )
   uint8_t buf[BLAKE2_KAT_LENGTH];
   size_t i, step;
 
+/*	
+	BLAKE2B_KEYBYTES = 64 
+	BLAKE2_KAT_LENGTH = 256
+	BLAKE2B_BLOCKBYTES = 128
+	BLAKE2B_OUTBYTES = 64
+*/
   for( i = 0; i < BLAKE2B_KEYBYTES; ++i )
-    key[i] = ( uint8_t )i;
+    key[i] = ( uint8_t )0;
 
-  for( i = 0; i < BLAKE2_KAT_LENGTH; ++i )
-    buf[i] = ( uint8_t )i;
 
-  /* Test simple API */
-  for( i = 0; i < BLAKE2_KAT_LENGTH; ++i )
-  {
+    buf[0] = 0x61;
+    buf[1] = 0x0a;
+    buf[2] = 0x44;
+    buf[3] = 0x85;
+    buf[4] = 0xad;
+    buf[5] = 0x56;
+    buf[6] = 0x1f;
+    buf[7] = 0x80;
+    buf[8] = 0x71;
+    buf[9] = 0x6d;
+    buf[10] = 0x7b;
+    buf[11] = 0x0c;
+    buf[12] = 0xcb;
+    buf[13] = 0x7d;
+    buf[14] = 0x87;
+    buf[15] = 0x6c;
+    buf[16] = 0x3e;
+    buf[17] = 0xaa;
+    buf[18] = 0xcd;
+    buf[19] = 0xf7;
+    buf[20] = 0x5e;
+    buf[21] = 0x93;
+    buf[22] = 0x42;
+    buf[23] = 0x66;
+    buf[24] = 0xd0;
+    buf[25] = 0x61;
+    buf[26] = 0xeb;
+    buf[27] = 0x7b;
+    buf[28] = 0x9f;
+    buf[29] = 0x68;
+    buf[30] = 0xd0;
+    buf[31] = 0x93;
+    buf[32] = 0xfc;
+    buf[33] = 0x75;
+    buf[34] = 0x6d;
+    buf[35] = 0x94;
+    buf[36] = 0x5b;
+    buf[37] = 0x0b;
+    buf[38] = 0xbf;
+    buf[39] = 0x82;
+    buf[40] = 0x2d;
+    buf[41] = 0x71;
+    buf[42] = 0xf4;
+    buf[43] = 0xe5;
+    buf[44] = 0xe9;
+    buf[45] = 0xb7;
+    buf[46] = 0x33;
+    buf[47] = 0xe7;
+    buf[48] = 0xac;
+    buf[49] = 0xf8;
+    buf[50] = 0x70;
+    buf[51] = 0xa4;
+    buf[52] = 0xb6;
+    buf[53] = 0xc0;
+    buf[54] = 0xe6;
+    buf[55] = 0x10;
+    buf[56] = 0x14;
+    buf[57] = 0x57;
+    buf[58] = 0x81;
+    buf[59] = 0xbe;
+    buf[60] = 0xca;
+    buf[61] = 0x04;
+    buf[62] = 0xe6;
+    buf[63] = 0x3f;
+    buf[64] = 0x1b;
+    buf[65] = 0x22;
+    buf[66] = 0xe0;
+    buf[67] = 0xa1;
+    buf[68] = 0xb0;
+    buf[69] = 0x48;
+    buf[70] = 0x79;
+    buf[71] = 0x7e;
+    buf[72] = 0x53;
+    buf[73] = 0xd9;
+    buf[74] = 0x4d;
+    buf[75] = 0x73;
+    buf[76] = 0x25;
+    buf[77] = 0x67;
+    buf[78] = 0xe8;
+    buf[79] = 0xfc;
+    buf[80] = 0x77;
+    buf[81] = 0xcb;
+    buf[82] = 0x4f;
+    buf[83] = 0x5f;
+    buf[84] = 0xe7;
+    buf[85] = 0xcc;
+    buf[86] = 0xe5;
+    buf[87] = 0xbe;
+    buf[88] = 0x3f;
+    buf[89] = 0x91;
+    buf[90] = 0x5d;
+    buf[91] = 0x95;
+    buf[92] = 0x20;
+    buf[93] = 0x87;
+    buf[94] = 0x9e;
+    buf[95] = 0x17;
+    buf[96] = 0xe6;
+    buf[97] = 0xf4;
+    buf[98] = 0x01;
+    buf[99] = 0x6b;
+    buf[100] = 0xe0;
+    buf[101] = 0x22;
+    buf[102] = 0x86;
+    buf[103] = 0x92;
+    buf[104] = 0xda;
+    buf[105] = 0x17;
+    buf[106] = 0x25;
+    buf[107] = 0x6a;
+    buf[108] = 0x9e;
+    buf[109] = 0xa7;
+    buf[110] = 0xc1;
+    buf[111] = 0x2c;
+    buf[112] = 0x50;
+    buf[113] = 0x29;
+    buf[114] = 0x54;
+    buf[115] = 0xe1;
+    buf[116] = 0xfa;
+    buf[117] = 0x50;
+    buf[118] = 0xd8;
+    buf[119] = 0xf3;
+    buf[120] = 0x2b;
+    buf[121] = 0xd3;
+    buf[122] = 0x0d;
+    buf[123] = 0x7a;
+    buf[124] = 0xbe;
+    buf[125] = 0x48;
+    buf[126] = 0x78;
+    buf[127] = 0x72;
+
+/*
+    buf[127] = 0x61;
+    buf[126] = 0x0a;
+    buf[125] = 0x44;
+    buf[124] = 0x85;
+    buf[123] = 0xad;
+    buf[122] = 0x56;
+    buf[121] = 0x1f;
+    buf[120] = 0x80;
+    buf[119] = 0x71;
+    buf[118] = 0x6d;
+    buf[117] = 0x7b;
+    buf[116] = 0x0c;
+    buf[115] = 0xcb;
+    buf[114] = 0x7d;
+    buf[113] = 0x87;
+    buf[112] = 0x6c;
+    buf[111] = 0x3e;
+    buf[110] = 0xaa;
+    buf[109] = 0xcd;
+    buf[108] = 0xf7;
+    buf[107] = 0x5e;
+    buf[106] = 0x93;
+    buf[105] = 0x42;
+    buf[104] = 0x66;
+    buf[103] = 0xd0;
+    buf[102] = 0x61;
+    buf[101] = 0xeb;
+    buf[100] = 0x7b;
+    buf[99] = 0x9f;
+    buf[98] = 0x68;
+    buf[97] = 0xd0;
+    buf[96] = 0x93;
+    buf[95] = 0xfc;
+    buf[94] = 0x75;
+    buf[93] = 0x6d;
+    buf[92] = 0x94;
+    buf[91] = 0x5b;
+    buf[90] = 0x0b;
+    buf[89] = 0xbf;
+    buf[88] = 0x82;
+    buf[87] = 0x2d;
+    buf[86] = 0x71;
+    buf[85] = 0xf4;
+    buf[84] = 0xe5;
+    buf[83] = 0xe9;
+    buf[82] = 0xb7;
+    buf[81] = 0x33;
+    buf[80] = 0xe7;
+    buf[79] = 0xac;
+    buf[78] = 0xf8;
+    buf[77] = 0x70;
+    buf[76] = 0xa4;
+    buf[75] = 0xb6;
+    buf[74] = 0xc0;
+    buf[73] = 0xe6;
+    buf[72] = 0x10;
+    buf[71] = 0x14;
+    buf[70] = 0x57;
+    buf[69] = 0x81;
+    buf[68] = 0xbe;
+    buf[67] = 0xca;
+    buf[66] = 0x04;
+    buf[65] = 0xe6;
+    buf[64] = 0x3f;
+    buf[63] = 0x1b;
+    buf[62] = 0x22;
+    buf[61] = 0xe0;
+    buf[60] = 0xa1;
+    buf[59] = 0xb0;
+    buf[58] = 0x48;
+    buf[57] = 0x79;
+    buf[56] = 0x7e;
+    buf[55] = 0x53;
+    buf[54] = 0xd9;
+    buf[53] = 0x4d;
+    buf[52] = 0x73;
+    buf[51] = 0x25;
+    buf[50] = 0x67;
+    buf[49] = 0xe8;
+    buf[48] = 0xfc;
+    buf[47] = 0x77;
+    buf[46] = 0xcb;
+    buf[45] = 0x4f;
+    buf[44] = 0x5f;
+    buf[43] = 0xe7;
+    buf[42] = 0xcc;
+    buf[41] = 0xe5;
+    buf[40] = 0xbe;
+    buf[39] = 0x3f;
+    buf[38] = 0x91;
+    buf[37] = 0x5d;
+    buf[36] = 0x95;
+    buf[35] = 0x20;
+    buf[34] = 0x87;
+    buf[33] = 0x9e;
+    buf[32] = 0x17;
+    buf[31] = 0xe6;
+    buf[30] = 0xf4;
+    buf[29] = 0x01;
+    buf[28] = 0x6b;
+    buf[27] = 0xe0;
+    buf[26] = 0x22;
+    buf[25] = 0x86;
+    buf[24] = 0x92;
+    buf[23] = 0xda;
+    buf[22] = 0x17;
+    buf[21] = 0x25;
+    buf[20] = 0x6a;
+    buf[19] = 0x9e;
+    buf[18] = 0xa7;
+    buf[17] = 0xc1;
+    buf[16] = 0x2c;
+    buf[15] = 0x50;
+    buf[14] = 0x29;
+    buf[13] = 0x54;
+    buf[12] = 0xe1;
+    buf[11] = 0xfa;
+    buf[10] = 0x50;
+    buf[9] = 0xd8;
+    buf[8] = 0xf3;
+    buf[7] = 0x2b;
+    buf[6] = 0xd3;
+    buf[5] = 0x0d;
+    buf[4] = 0x7a;
+    buf[3] = 0xbe;
+    buf[2] = 0x48;
+    buf[1] = 0x78;
+    buf[0] = 0x72;
+*/
+
     uint8_t hash[BLAKE2B_OUTBYTES];
-    blake2b( hash, BLAKE2B_OUTBYTES, buf, i, key, BLAKE2B_KEYBYTES );
-
+	blake2b( hash, BLAKE2B_OUTBYTES,  buf  ,  128  , key , BLAKE2B_KEYBYTES );
+/*		   (	 , 		  64       , 0-256 ,0-256, 0-64(key),      64     ) */
     if( 0 != memcmp( hash, blake2b_keyed_kat[i], BLAKE2B_OUTBYTES ) )
     {
+    printf("%d\n",blake2b_keyed_kat[i]);
+	printf("0");
       goto fail;
-    }
-  }
 
-  /* Test streaming API */
-  for(step = 1; step < BLAKE2B_BLOCKBYTES; ++step) {
-    for (i = 0; i < BLAKE2_KAT_LENGTH; ++i) {
+	}
+
+/* Test streaming API */
+  for(step = 1; step < BLAKE2B_BLOCKBYTES; ++step) 
+  {
+    for (i = 0; i < BLAKE2_KAT_LENGTH; ++i) 
+	{
       uint8_t hash[BLAKE2B_OUTBYTES];
       blake2b_state S;
       uint8_t * p = buf;
       size_t mlen = i;
       int err = 0;
-
-      if( (err = blake2b_init_key(&S, BLAKE2B_OUTBYTES, key, BLAKE2B_KEYBYTES)) < 0 ) {
+      if( (err = blake2b_init_key(&S, BLAKE2B_OUTBYTES, key, BLAKE2B_KEYBYTES)) < 0 ) 
+	  {
+	  	printf("1");
         goto fail;
       }
 
-      while (mlen >= step) {
-        if ( (err = blake2b_update(&S, p, step)) < 0 ) {
+      while (mlen >= step) 
+	  {
+        if ( (err = blake2b_update(&S, p, step)) < 0 ) 
+		{
+	  	printf("2");
           goto fail;
         }
         mlen -= step;
         p += step;
       }
-      if ( (err = blake2b_update(&S, p, mlen)) < 0) {
+      if ( (err = blake2b_update(&S, p, mlen)) < 0) 
+	  {
+	  	printf("3");
         goto fail;
       }
-      if ( (err = blake2b_final(&S, hash, BLAKE2B_OUTBYTES)) < 0) {
+      if ( (err = blake2b_final(&S, hash, BLAKE2B_OUTBYTES)) < 0) 
+	  {
+	  	printf("4");
         goto fail;
       }
 
-      if (0 != memcmp(hash, blake2b_keyed_kat[i], BLAKE2B_OUTBYTES)) {
+      if (0 != memcmp(hash, blake2b_keyed_kat[i], BLAKE2B_OUTBYTES)) 
+	  {
+	  	printf("5");
         goto fail;
       }
     }
   }
-
   puts( "ok" );
   return 0;
 fail:
